@@ -1,0 +1,7 @@
+lr: 3e-4
+data_dir: data
+chkpt_dir: models
+latent_dim: 100
+train_batch_size: 16
+test_batch_size: 16
+epochs: 20
