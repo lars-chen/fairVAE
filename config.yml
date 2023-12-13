@@ -1,7 +1,12 @@
 lr: 3e-4
 data_dir: data
 chkpt_dir: models
-latent_dim: 100
-train_batch_size: 16
-test_batch_size: 16
-epochs: 20
+checkpoints: 1
+num_samples: 8
+image_size: 90
+latent_dim: 50
+train_batch_size: 4
+test_batch_size: 4
+epochs: 100
+beta: 1
+
