@@ -1,12 +1,16 @@
 import yaml
 import torch
+import os
+import numpy as np
 
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torch import optim
 from torchvision import transforms
 
-from torchvision.datasets import CelebA, ImageFolder
+from torchvision.datasets import CelebA
 from torchvision.utils import save_image
+
+from torch.utils.tensorboard import SummaryWriter
 
 # project modules
 from vae import VAE
@@ -14,6 +18,7 @@ from vae import VAE
 # load hyperparameters from config.yml
 with open("config.yml", "r") as file:
     config = yaml.safe_load(file)
+
 
 data_dir = config["data_dir"]
 
@@ -27,14 +32,6 @@ num_samples = config["num_samples"]
 checkpoints = config["checkpoints"]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-# load CelebA data from data directory
-# train_dataset = CelebA(
-#     root=data_dir, split="train", target_type="identity", download=False
-# )
-# train_loader = DataLoader(
-#     dataset=train_dataset, batch_size=train_batch_size, shuffle=True
-# )
-
 
 transform = transforms.Compose(
     [
@@ -45,7 +42,13 @@ transform = transforms.Compose(
     ]
 )
 
-dataset = ImageFolder(data_dir, transform)
+# first 15 images are missing in CelebA dataset
+dataset = CelebA(root=data_dir, split="train", transform=transform, download=False)
+dataset = Subset(dataset=dataset, indices=np.arange(16, 162770, 1))
+
+# test_set = dataset = CelebA(
+#     root=data_dir, split="test", transform=transform, download=False
+# )
 
 train_loader = DataLoader(
     dataset=dataset,
@@ -55,12 +58,13 @@ train_loader = DataLoader(
     drop_last=True,
 )
 
+
 model = VAE(image_size, beta).to(device)
 optimizer = optim.Adam(model.parameters(), lr=lr)
 
 
 def train(epoch):
-    nsamples = 100
+    nsamples = 500
     model.train()
     train_loss = 0
 
@@ -92,6 +96,10 @@ def train(epoch):
             epoch, train_loss / len(train_loader.dataset)
         )
     )
+
+
+def test(epoch):
+    pass
 
 
 if __name__ == "__main__":
