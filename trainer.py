@@ -14,24 +14,23 @@ from torch.utils.tensorboard import SummaryWriter
 
 # project modules
 from vae import VAE
+from utils import read_config
 
-# load hyperparameters from config.yml
-with open("config.yml", "r") as file:
-    config = yaml.safe_load(file)
-
-
-data_dir = config["data_dir"]
-
-train_batch_size = config["train_batch_size"]
-image_size = config["image_size"]
-epochs = config["epochs"]
-lr = float(config["lr"])
-beta = config["beta"]
-latent_dim = config["latent_dim"]
-num_samples = config["num_samples"]
-checkpoints = config["checkpoints"]
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
+(
+    data_dir,
+    train_batch_size,
+    image_size,
+    epochs,
+    lr,
+    beta,
+    latent_dim,
+    num_samples,
+    checkpoints,
+    label_idxs,
+    t_idx,
+) = read_config()
 
 transform = transforms.Compose(
     [
@@ -68,26 +67,31 @@ def train(epoch):
     model.train()
     train_loss = 0
 
-    for batch_idx, (data, labels) in enumerate(train_loader):
+    for batch_idx, (xs, labels) in enumerate(train_loader):
         if batch_idx > nsamples:
             break
 
         torch.cuda.empty_cache()
-        data = data.to(device)
+        xs = xs.to(device)
+        ys = labels[:, label_idxs]
+        t = labels[:, t_idx]
+
         optimizer.zero_grad()
-        recon_batch, mu, log_var = model(data)
+        recon_batch, mu, log_var, prior_mu, prior_log_var = model(xs, ys, t)
         log_var = torch.clamp_(log_var, -10, 10)
-        loss = model.loss_function(recon_batch, data, mu, log_var)
+        loss = model.loss_function(
+            recon_batch, xs, mu, log_var, prior_mu, prior_log_var
+        )
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
         print(
             "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
                 epoch,
-                batch_idx * len(data),
+                batch_idx * len(xs),
                 len(train_loader.dataset),
                 100.0 * batch_idx / len(train_loader),
-                loss.item() / len(data),
+                loss.item() / len(xs),
             )
         )
 

@@ -5,6 +5,7 @@ checkpoints: 1
 num_samples: 64
 image_size: 64
 latent_dim: 50
+label_dim: 6
 train_batch_size: 16
 test_batch_size: 4
 epochs: 20

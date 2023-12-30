@@ -1,0 +1,24 @@
+    1. Treatment condition:
+        - Male
+    2. Conditioned labels:
+        - Young
+        - Smiling
+        - Mouth_Slightly_Open
+        - No_Beard
+        - Bald
+        - Pale_Skin
+
+Steps:
+
+    1. Working Vanilla VAE
+          - Can only sample from latent space Gaussian
+          - Does not use labels at all
+
+    2. Intact VAE
+          - 
+
+
+Next time:
+    2. reformulate KL divergence possible
+    3. update train function to work with labels and treatments
+    4. test functionality thus far? 

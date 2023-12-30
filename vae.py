@@ -3,6 +3,7 @@ import torch
 from torch import nn
 from torchvision import transforms
 from torch.nn import functional as F
+from torch.distributions import MultivariateNormal, kl
 
 # load hyperparameters from config.yml
 with open("config.yml", "r") as file:
@@ -11,6 +12,7 @@ with open("config.yml", "r") as file:
 celeb_path = config["data_dir"]
 image_size = config["image_size"]
 latent_dim = config["latent_dim"]
+label_dim = config["label_dim"]
 
 
 celeb_transform = transforms.Compose(
@@ -39,6 +41,19 @@ class VAE(nn.Module):
         in_channels = 3
         modules = []
 
+        # Build Prior Network
+        self.prior_nn = nn.Sequential(
+            nn.Linear(label_dim + 1, 200),
+            nn.BatchNorm1d(),
+            nn.ReLU(),
+            nn.Linear(200, 200),
+            nn.BatchNorm1d(),
+            nn.ReLU(),
+        )
+
+        self.prior_mu = nn.Linear(200, latent_dim)
+        self.prior_var = nn.Linear(200, latent_dim)
+
         # Build Encoder
         for h_dim in hidden_dims:
             modules.append(
@@ -56,16 +71,24 @@ class VAE(nn.Module):
             )
             in_channels = h_dim
 
-        self.encoder = nn.Sequential(*modules)
-        out = self.encoder(torch.rand(1, 3, image_size, image_size))
-        self.size = out.shape[2]
-        self.fc_mu = nn.Linear(hidden_dims[-1] * self.size * self.size, latent_dim)
-        self.fc_var = nn.Linear(hidden_dims[-1] * self.size * self.size, latent_dim)
+        self.cnn = nn.Sequential(*modules)
+        self.size = self.cnn(torch.zeros(1, 3, image_size, image_size)).shape[2]
+
+        self.encoder_fc = nn.Sequential(
+            nn.Linear(hidden_dims[-1] * self.size * self.size, 256),
+            nn.BatchNorm1d(),
+            nn.LeakyReLU(),
+        )
+
+        self.context_nn = nn.Linear(256 + label_dim + 1)
+
+        self.fc_mu = nn.Linear(256 + label_dim + 1, latent_dim)
+        self.fc_var = nn.Linear(256 + label_dim + 1, latent_dim)
 
         # Build Decoder
         modules = []
         self.decoder_input = nn.Linear(
-            latent_dim, hidden_dims[-1] * self.size * self.size
+            latent_dim + 1, hidden_dims[-1] * self.size * self.size
         )
         hidden_dims.reverse()
 
@@ -102,12 +125,21 @@ class VAE(nn.Module):
             nn.Sigmoid(),
         )
 
-    def encode(self, x):
-        result = self.encoder(x)
-        result = torch.flatten(result, start_dim=1)
+    def encode(self, x, y, t):
+        result = self.cnn(x)  # extract image features
+        result = torch.flatten(result, start_dim=1)  # map to cnn output to vector
+        result = self.encoder_fc(result)
+        # condition on labels and treatment
+        result = torch.cat((result, y, t))
+        result = self.context_nn(result)
+
         mu = self.fc_mu(result)
         log_var = self.fc_var(result)
-        return mu, log_var
+
+        prior = self.prior_nn(y, t)
+        prior_mu = self.prior_mu(prior)
+        prior_log_var = self.prior_var(prior)
+        return mu, log_var, prior_mu, prior_log_var
 
     def reparameterize(self, mu, log_var):
         std = torch.exp(0.5 * log_var)
@@ -124,15 +156,19 @@ class VAE(nn.Module):
         result = torch.nan_to_num(result)
         return result
 
-    def forward(self, x):
-        mu, log_var = self.encode(x)
+    def forward(self, x, y, t):
+        mu, log_var, prior_mu, prior_log_var = self.encode(x, y, t)
         z = self.reparameterize(mu, log_var)
-        return self.decode(z), mu, log_var
+        return self.decode(z), mu, log_var, prior_mu, prior_log_var
 
     # Reconstruction + KL divergence losses summed over all elements and batch
-    def loss_function(self, recon_x, x, mu, log_var):
+    def loss_function(self, recon_x, x, mu, log_var, prior_mu, prior_log_var):
         MSE = F.mse_loss(recon_x, x.view(-1, self.image_dim))
-        KLD = -0.5 * torch.mean(1 + log_var - mu.pow(2) - log_var.exp())
+        z_pos = MultivariateNormal(loc=mu, covariance_matrix=log_var.diag())
+        z_prior = MultivariateNormal(
+            loc=prior_mu, covariance_matrix=prior_log_var.diag()
+        )
+        KLD = kl.kl_divergence(z_pos, z_prior)
         kld_weight = 0.00025
         loss = MSE + kld_weight * KLD
         return loss
