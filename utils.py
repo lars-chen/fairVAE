@@ -13,6 +13,7 @@ def read_config():
         config = yaml.safe_load(file)
     data_dir = config["data_dir"]
 
+    validate = config["validate"]
     train_batch_size = config["train_batch_size"]
     image_size = config["image_size"]
     epochs = config["epochs"]
@@ -22,15 +23,16 @@ def read_config():
     num_samples = config["num_samples"]
     checkpoints = config["checkpoints"]
     label_idxs = [
-        [config["labels"]["Young"]],
-        [config["labels"]["Smiling"]],
-        [config["labels"]["Mouth_Slightly_Open"]],
-        [config["labels"]["No_Beard"]],
-        [config["labels"]["Bald"]],
-        [config["labels"]["Pale_Skin"]],
+        config["labels"]["Young"],
+        config["labels"]["Smiling"],
+        config["labels"]["Mouth_Slightly_Open"],
+        config["labels"]["No_Beard"],
+        config["labels"]["Bald"],
+        config["labels"]["Pale_Skin"],
     ]
     t_idx = config["labels"]["Male"]
     return (
+        validate,
         data_dir,
         train_batch_size,
         image_size,

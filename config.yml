@@ -1,12 +1,12 @@
+validate: 0
 lr: 1e-3
 data_dir: data
-chkpt_dir: models/celeba/
-checkpoints: 1
+checkpoints: 2
 num_samples: 64
 image_size: 64
-latent_dim: 50
+latent_dim: 64
 label_dim: 6
-train_batch_size: 16
+train_batch_size: 2
 test_batch_size: 4
 epochs: 20
 beta: 1

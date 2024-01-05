@@ -1,6 +1,4 @@
-import yaml
 import torch
-import os
 import numpy as np
 
 from torch.utils.data import DataLoader, Subset
@@ -9,16 +7,16 @@ from torchvision import transforms
 
 from torchvision.datasets import CelebA
 from torchvision.utils import save_image
-
 from torch.utils.tensorboard import SummaryWriter
 
 # project modules
 from vae import VAE
-from utils import read_config
+from utils import read_config, count_parameters
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-(
+(   
+    validate,
     data_dir,
     train_batch_size,
     image_size,
@@ -41,13 +39,12 @@ transform = transforms.Compose(
     ]
 )
 
+model = VAE(image_size, beta).to(device)
+optimizer = optim.Adam(model.parameters(), lr=lr)
+
 # first 15 images are missing in CelebA dataset
 dataset = CelebA(root=data_dir, split="train", transform=transform, download=False)
 dataset = Subset(dataset=dataset, indices=np.arange(16, 162770, 1))
-
-# test_set = dataset = CelebA(
-#     root=data_dir, split="test", transform=transform, download=False
-# )
 
 train_loader = DataLoader(
     dataset=dataset,
@@ -57,9 +54,17 @@ train_loader = DataLoader(
     drop_last=True,
 )
 
+# validation_set = dataset = CelebA(
+#     root=data_dir, split="valid", transform=transform, download=False
+# )
 
-model = VAE(image_size, beta).to(device)
-optimizer = optim.Adam(model.parameters(), lr=lr)
+# validation_loader = DataLoader(
+#     dataset=validation_set,
+#     batch_size=train_batch_size,
+#     shuffle=True,
+#     num_workers=8,
+#     drop_last=True,
+# )
 
 
 def train(epoch):
@@ -67,57 +72,101 @@ def train(epoch):
     model.train()
     train_loss = 0
 
-    for batch_idx, (xs, labels) in enumerate(train_loader):
+    for batch_idx, (images, labels) in enumerate(train_loader):
         if batch_idx > nsamples:
             break
 
         torch.cuda.empty_cache()
-        xs = xs.to(device)
-        ys = labels[:, label_idxs]
-        t = labels[:, t_idx]
+        images = images.to(device)
+        xs = torch.tensor(labels[:, label_idxs], dtype=torch.float32)
+        ts = torch.tensor(labels[:, t_idx].unsqueeze(1), dtype=torch.float32)
 
         optimizer.zero_grad()
-        recon_batch, mu, log_var, prior_mu, prior_log_var = model(xs, ys, t)
-        log_var = torch.clamp_(log_var, -10, 10)
-        loss = model.loss_function(
-            recon_batch, xs, mu, log_var, prior_mu, prior_log_var
-        )
+        recon_batch, mu, log_var = model(images, xs, ts)
+        loss = model.loss_function(recon_batch, images, xs, mu, log_var)
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
+        
         print(
             "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
                 epoch,
-                batch_idx * len(xs),
+                batch_idx * len(images),
                 len(train_loader.dataset),
                 100.0 * batch_idx / len(train_loader),
-                loss.item() / len(xs),
+                loss.item() / len(images),
             )
         )
-
+    
+    avg_loss = train_loss / len(train_loader.dataset)
     print(
         "====> Epoch: {} Average loss: {:.4f}".format(
-            epoch, train_loss / len(train_loader.dataset)
+            epoch, avg_loss
         )
     )
+    writer.add_scalar("Loss/train", train_loss, global_step=epoch)
 
+# def test(epoch):
+#     print("Testing...")
+#     test_loss = 0
+#     for batch_idx, (images, labels) in enumerate(validation_loader):
+#         if batch_idx > 100:
+#             break
+#         torch.cuda.empty_cache()
+#         images = images.to(device)
+#         xs = torch.tensor(labels[:, label_idxs], dtype=torch.float32)
+#         ts = torch.tensor(labels[:, t_idx].unsqueeze(1), dtype=torch.float32)
+#         recon_batch, mu, log_var = model(images, xs, ts)
+#         loss = model.loss_function(recon_batch, images, xs, mu, log_var)
+#         test_loss += loss.item()
+        
+#         print(
+#             "Test Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
+#                 epoch,
+#                 batch_idx * len(images),
+#                 len(validation_loader.dataset),
+#                 100.0 * batch_idx / len(validation_loader),
+#                 loss.item() / len(images),
+#             )
+#         )
 
-def test(epoch):
-    pass
-
-
+#     avg_loss = test_loss / len(validation_loader.dataset)
+#     print(
+#         "====> Epoch: {} Average loss: {:.4f}".format(
+#             epoch, avg_loss
+#         )
+#     )
+#     writer.add_scalar("Loss/test", avg_loss, epoch)    
+    
 if __name__ == "__main__":
-    print(f"epochs: {epochs}")
+    writer = SummaryWriter()
+    
+    print(model)
+    print(f"Epochs: {epochs}")
+    print(f"Number of model parameters: {np.round(count_parameters(model) / 1e6, 1)} million")
+    print(f"Running model on device: {device}")
     for epoch in range(1, epochs + 1):
+        model.train()
         train(epoch)
-
-        if ~(epoch % checkpoints):
-            torch.save(model, f"models/vae_model_{epoch}.pth")
-            # test(epoch)
+        
+        if epoch % checkpoints == 0:
+            torch.save(model, writer.log_dir + f"\\epoch_{epoch}\\vae_model.pth")
+            
+            model.eval()
             with torch.no_grad():
+                # test(epoch)
                 sample = torch.randn(num_samples, latent_dim).to(device)
-                sample = model.decode(sample).cpu()
+                sample_0 = model.decode(sample, torch.zeros((num_samples, 1))).cpu()
+                sample_1 = model.decode(sample, torch.ones((num_samples, 1))).cpu()
+
                 save_image(
-                    sample.view(num_samples, 3, model.image_size, model.image_size),
-                    f"models/sample_{str(epoch)}.png",
+                    sample_0.view(num_samples, 3, model.image_size, model.image_size),
+                    writer.log_dir + f"\\epoch_{str(epoch)}\\sample_0.png",
                 )
+
+                save_image(
+                    sample_1.view(num_samples, 3, model.image_size, model.image_size),
+                    writer.log_dir + f"\\epoch_{str(epoch)}\\sample1_1.png",
+                )
+    writer.flush()
+    writer.close()

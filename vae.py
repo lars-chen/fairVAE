@@ -1,9 +1,12 @@
 import yaml
 import torch
+import warnings
 from torch import nn
 from torchvision import transforms
 from torch.nn import functional as F
 from torch.distributions import MultivariateNormal, kl
+
+warnings.filterwarnings("ignore")
 
 # load hyperparameters from config.yml
 with open("config.yml", "r") as file:
@@ -32,27 +35,26 @@ class VAE(nn.Module):
     def __init__(self, image_size, beta):
         super(VAE, self).__init__()
 
+        self.q_pos = None
+        self.p_prior = None
         self.image_size = image_size
         self.image_dim = 3 * image_size * image_size
         self.beta = beta
 
-        hidden_dims = [32, 64, 128, 256, 512]
+        hidden_dims = [32, 64, 128, 256]  # , 512]
         self.final_dim = hidden_dims[-1]
         in_channels = 3
         modules = []
 
         # Build Prior Network
         self.prior_nn = nn.Sequential(
-            nn.Linear(label_dim + 1, 200),
-            nn.BatchNorm1d(),
-            nn.ReLU(),
-            nn.Linear(200, 200),
-            nn.BatchNorm1d(),
+            nn.Linear(label_dim, 100),
+            nn.BatchNorm1d(100),
             nn.ReLU(),
         )
 
-        self.prior_mu = nn.Linear(200, latent_dim)
-        self.prior_var = nn.Linear(200, latent_dim)
+        self.prior_mu = nn.Linear(100, latent_dim)
+        self.prior_var = nn.Linear(100, latent_dim)
 
         # Build Encoder
         for h_dim in hidden_dims:
@@ -76,14 +78,14 @@ class VAE(nn.Module):
 
         self.encoder_fc = nn.Sequential(
             nn.Linear(hidden_dims[-1] * self.size * self.size, 256),
-            nn.BatchNorm1d(),
+            nn.BatchNorm1d(256),
             nn.LeakyReLU(),
         )
 
-        self.context_nn = nn.Linear(256 + label_dim + 1)
+        self.context_nn = nn.Linear(256 + label_dim + 1, 200)
 
-        self.fc_mu = nn.Linear(256 + label_dim + 1, latent_dim)
-        self.fc_var = nn.Linear(256 + label_dim + 1, latent_dim)
+        self.fc_mu = nn.Linear(200, latent_dim)
+        self.fc_var = nn.Linear(200, latent_dim)
 
         # Build Decoder
         modules = []
@@ -125,29 +127,37 @@ class VAE(nn.Module):
             nn.Sigmoid(),
         )
 
-    def encode(self, x, y, t):
-        result = self.cnn(x)  # extract image features
+    def encode(self, image, x, t):
+        result = self.cnn(image)  # extract image features
         result = torch.flatten(result, start_dim=1)  # map to cnn output to vector
         result = self.encoder_fc(result)
+
         # condition on labels and treatment
-        result = torch.cat((result, y, t))
+        result = torch.cat((result, x, t), dim=1)
         result = self.context_nn(result)
 
+        # define variational posterior distribution
         mu = self.fc_mu(result)
         log_var = self.fc_var(result)
+        log_var = torch.clamp_(log_var, -10, 10)
+        return mu, log_var
 
-        prior = self.prior_nn(y, t)
-        prior_mu = self.prior_mu(prior)
-        prior_log_var = self.prior_var(prior)
-        return mu, log_var, prior_mu, prior_log_var
+    def prior_distribution(self, x):
+        result = self.prior_nn(x)
+        prior_mu = self.prior_mu(result)
+        prior_log_var = self.prior_var(result)
+        prior_log_var = torch.clamp_(prior_log_var, -10, 10)
+        return MultivariateNormal(
+            loc=prior_mu, covariance_matrix=torch.diag_embed(torch.exp(prior_log_var))
+        )
 
     def reparameterize(self, mu, log_var):
         std = torch.exp(0.5 * log_var)
         eps = torch.randn_like(std)
         return eps * std + mu
 
-    def decode(self, z):
-        result = self.decoder_input(z)
+    def decode(self, z, t):
+        result = self.decoder_input(torch.cat((z, t), dim=1))
         result = result.view(-1, self.final_dim, self.size, self.size)
         result = self.decoder(result)
         result = self.final_layer(result)
@@ -156,19 +166,21 @@ class VAE(nn.Module):
         result = torch.nan_to_num(result)
         return result
 
-    def forward(self, x, y, t):
-        mu, log_var, prior_mu, prior_log_var = self.encode(x, y, t)
+    def forward(self, image, x, t):
+        mu, log_var = self.encode(image, x, t)
         z = self.reparameterize(mu, log_var)
-        return self.decode(z), mu, log_var, prior_mu, prior_log_var
+        return self.decode(z, t), mu, log_var
 
     # Reconstruction + KL divergence losses summed over all elements and batch
-    def loss_function(self, recon_x, x, mu, log_var, prior_mu, prior_log_var):
-        MSE = F.mse_loss(recon_x, x.view(-1, self.image_dim))
-        z_pos = MultivariateNormal(loc=mu, covariance_matrix=log_var.diag())
-        z_prior = MultivariateNormal(
-            loc=prior_mu, covariance_matrix=prior_log_var.diag()
+    def loss_function(self, recon_image, image, x, mu, log_var):
+        MSE = F.mse_loss(recon_image, image.view(-1, self.image_dim))
+
+        posterior = MultivariateNormal(
+            loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
         )
-        KLD = kl.kl_divergence(z_pos, z_prior)
+        prior = self.prior_distribution(x)
+
+        KLD = torch.mean(kl.kl_divergence(posterior, prior))
         kld_weight = 0.00025
         loss = MSE + kld_weight * KLD
         return loss
