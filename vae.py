@@ -148,7 +148,8 @@ class VAE(nn.Module):
         prior_log_var = self.prior_var(result)
         prior_log_var = torch.clamp_(prior_log_var, -10, 10)
         return MultivariateNormal(
-            loc=prior_mu, covariance_matrix=torch.diag_embed(torch.exp(prior_log_var))
+            loc=prior_mu,
+            covariance_matrix=torch.diag_embed(torch.exp(0.5 * prior_log_var)),
         )
 
     def reparameterize(self, mu, log_var):
@@ -176,7 +177,7 @@ class VAE(nn.Module):
         MSE = F.mse_loss(recon_image, image.view(-1, self.image_dim))
 
         posterior = MultivariateNormal(
-            loc=mu, covariance_matrix=torch.diag_embed(torch.exp(log_var))
+            loc=mu, covariance_matrix=torch.diag_embed(torch.exp(0.5 * log_var))
         )
         prior = self.prior_distribution(x)
 

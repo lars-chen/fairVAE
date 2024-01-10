@@ -1,4 +1,5 @@
 import torch
+import os
 import numpy as np
 
 from torch.utils.data import DataLoader, Subset
@@ -15,7 +16,7 @@ from utils import read_config, count_parameters
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-(   
+(
     validate,
     data_dir,
     train_batch_size,
@@ -54,27 +55,28 @@ train_loader = DataLoader(
     drop_last=True,
 )
 
-# validation_set = dataset = CelebA(
-#     root=data_dir, split="valid", transform=transform, download=False
-# )
+if validate:
+    validation_set = dataset = CelebA(
+        root=data_dir, split="valid", transform=transform, download=False
+    )
 
-# validation_loader = DataLoader(
-#     dataset=validation_set,
-#     batch_size=train_batch_size,
-#     shuffle=True,
-#     num_workers=8,
-#     drop_last=True,
-# )
+    validation_loader = DataLoader(
+        dataset=validation_set,
+        batch_size=train_batch_size,
+        shuffle=True,
+        num_workers=8,
+        drop_last=True,
+    )
 
 
 def train(epoch):
-    nsamples = 500
+    # nsamples = 500
     model.train()
     train_loss = 0
 
     for batch_idx, (images, labels) in enumerate(train_loader):
-        if batch_idx > nsamples:
-            break
+        # if batch_idx > nsamples:
+        #     break
 
         torch.cuda.empty_cache()
         images = images.to(device)
@@ -87,7 +89,7 @@ def train(epoch):
         loss.backward()
         train_loss += loss.item()
         optimizer.step()
-        
+
         print(
             "Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
                 epoch,
@@ -97,16 +99,13 @@ def train(epoch):
                 loss.item() / len(images),
             )
         )
-    
+
     avg_loss = train_loss / len(train_loader.dataset)
-    print(
-        "====> Epoch: {} Average loss: {:.4f}".format(
-            epoch, avg_loss
-        )
-    )
+    print("====> Epoch: {} Average loss: {:.4f}".format(epoch, avg_loss))
     writer.add_scalar("Loss/train", train_loss, global_step=epoch)
 
-# def test(epoch):
+
+# def validate(epoch):
 #     print("Testing...")
 #     test_loss = 0
 #     for batch_idx, (images, labels) in enumerate(validation_loader):
@@ -119,7 +118,7 @@ def train(epoch):
 #         recon_batch, mu, log_var = model(images, xs, ts)
 #         loss = model.loss_function(recon_batch, images, xs, mu, log_var)
 #         test_loss += loss.item()
-        
+
 #         print(
 #             "Test Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f}".format(
 #                 epoch,
@@ -131,42 +130,44 @@ def train(epoch):
 #         )
 
 #     avg_loss = test_loss / len(validation_loader.dataset)
-#     print(
-#         "====> Epoch: {} Average loss: {:.4f}".format(
-#             epoch, avg_loss
-#         )
-#     )
-#     writer.add_scalar("Loss/test", avg_loss, epoch)    
-    
+#     print("====> Epoch: {} Average loss: {:.4f}".format(epoch, avg_loss))
+#     writer.add_scalar("Loss/test", avg_loss, epoch)
+
+
 if __name__ == "__main__":
     writer = SummaryWriter()
-    
     print(model)
     print(f"Epochs: {epochs}")
-    print(f"Number of model parameters: {np.round(count_parameters(model) / 1e6, 1)} million")
+    print(f"Model parameters: {np.round(count_parameters(model) / 1e6, 1)} million")
     print(f"Running model on device: {device}")
+
     for epoch in range(1, epochs + 1):
         model.train()
         train(epoch)
-        
+
         if epoch % checkpoints == 0:
-            torch.save(model, writer.log_dir + f"\\epoch_{epoch}\\vae_model.pth")
-            
+            epoch_dir = writer.log_dir.replace("\\", "/") + f"/epoch_{epoch}/"
+            os.makedirs(epoch_dir)
+            torch.save(model, epoch_dir + "vae_model.pth")
+
             model.eval()
             with torch.no_grad():
-                # test(epoch)
                 sample = torch.randn(num_samples, latent_dim).to(device)
                 sample_0 = model.decode(sample, torch.zeros((num_samples, 1))).cpu()
                 sample_1 = model.decode(sample, torch.ones((num_samples, 1))).cpu()
 
                 save_image(
                     sample_0.view(num_samples, 3, model.image_size, model.image_size),
-                    writer.log_dir + f"\\epoch_{str(epoch)}\\sample_0.png",
+                    epoch_dir + "sample_0.png",
                 )
 
                 save_image(
                     sample_1.view(num_samples, 3, model.image_size, model.image_size),
-                    writer.log_dir + f"\\epoch_{str(epoch)}\\sample1_1.png",
+                    epoch_dir + "sample_1.png",
                 )
+
+                # if validate:
+                #     validate(epoch)
+
     writer.flush()
     writer.close()
