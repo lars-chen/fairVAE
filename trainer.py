@@ -14,6 +14,7 @@ from torch.utils.tensorboard import SummaryWriter
 from vae import VAE
 from utils import read_config, count_parameters
 
+
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 (
