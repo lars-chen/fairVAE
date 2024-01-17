@@ -35,13 +35,11 @@ class VAE(nn.Module):
     def __init__(self, image_size, beta):
         super(VAE, self).__init__()
 
-        self.q_pos = None
-        self.p_prior = None
         self.image_size = image_size
         self.image_dim = 3 * image_size * image_size
         self.beta = beta
 
-        hidden_dims = [32, 64, 128, 256]  # , 512]
+        hidden_dims = [32, 64, 128, 256, 512]
         self.final_dim = hidden_dims[-1]
         in_channels = 3
         modules = []
@@ -182,6 +180,6 @@ class VAE(nn.Module):
         prior = self.prior_distribution(x)
 
         KLD = torch.mean(kl.kl_divergence(posterior, prior))
-        kld_weight = 0.00025
+        kld_weight = 0.0025
         loss = MSE + kld_weight * KLD
         return loss

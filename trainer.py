@@ -70,13 +70,12 @@ if validate:
 
 
 def train(epoch):
-    # nsamples = 500
     model.train()
     train_loss = 0
 
     for batch_idx, (images, labels) in enumerate(train_loader):
-        # if batch_idx > nsamples:
-        #     break
+        if batch_idx > 200:
+            break
 
         torch.cuda.empty_cache()
         images = images.to(device)
@@ -102,7 +101,8 @@ def train(epoch):
 
     avg_loss = train_loss / len(train_loader.dataset)
     print("====> Epoch: {} Average loss: {:.4f}".format(epoch, avg_loss))
-    writer.add_scalar("Loss/train", train_loss, global_step=epoch)
+
+    return avg_loss
 
 
 # def validate(epoch):
@@ -143,7 +143,8 @@ if __name__ == "__main__":
 
     for epoch in range(1, epochs + 1):
         model.train()
-        train(epoch)
+        train_loss = train(epoch)
+        writer.add_scalar("Loss/train", train_loss, global_step=epoch)
 
         if epoch % checkpoints == 0:
             epoch_dir = writer.log_dir.replace("\\", "/") + f"/epoch_{epoch}/"
